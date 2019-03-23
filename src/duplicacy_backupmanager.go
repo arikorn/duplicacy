@@ -676,6 +676,14 @@ func (manager *BackupManager) Backup(top string, quickMode bool, threads int, ta
 			PrettyNumber(totalUploadedFileChunkLength+totalUploadedSnapshotChunkLength),
 			PrettyNumber(totalUploadedFileChunkBytes+totalUploadedSnapshotChunkBytes))
 
+		gapSize, gapChunks, reuploadSize := manager.SnapshotManager.findGaps(localSnapshot)
+		oldGapSize, oldGapChunks, oldReuploadSize := manager.SnapshotManager.findGaps(remoteSnapshot)
+
+		LOG_INFO("BACKUP_STAT", "Deadspace: %s in %d file chunks; %s new gap space; %d new chunks",
+			PrettyNumber(gapSize), gapChunks, PrettyNumber(gapSize-oldGapSize), (gapChunks - oldGapChunks))
+		LOG_INFO("BACKUP_STAT", "To compact, need to reupload: %s; %s new size",
+			PrettyNumber(reuploadSize), PrettyNumber(reuploadSize-oldReuploadSize))
+
 		now := time.Now().Unix()
 		if now == startTime {
 			now = startTime + 1
@@ -713,6 +721,8 @@ func (manager *BackupManager) Backup(top string, quickMode bool, threads int, ta
 		skipped += " not included due to access errors"
 		LOG_WARN("BACKUP_SKIPPED", skipped)
 	}
+
+	LOG_INFO("COMPLETION_TIME", "Backup completed: %s", time.Now().Format(time.RFC850))
 
 	return true
 }

@@ -2284,6 +2284,65 @@ func (manager *SnapshotManager) pruneSnapshotsExhaustive(referencedFossils map[s
 	return true
 }
 
+// Find gaps in chunks - these are formed when more than one file is in a single chunk
+//   and one of the files is changed or deleted.  Call after CheckSnapshot?
+func (manager *SnapshotManager) findGaps(snapshot *Snapshot) (gapSize int64, nrChunks int, reuploadSize int64) {
+	type usageList map[int]int // subchunk start -> subchunk size (or end?)
+	chunkUsage := make(map[string]usageList)
+	chunkLengths := make(map[string]int)
+
+	addUsage := func(chunkIdx int, startOffset int, size int) {
+		ulist := chunkUsage[snapshot.ChunkHashes[chunkIdx]]
+		if ulist == nil {
+			ulist = make(usageList)
+		}
+		ulist[startOffset] = size
+		chunkUsage[snapshot.ChunkHashes[chunkIdx]] = ulist
+		chunkLengths[snapshot.ChunkHashes[chunkIdx]] = snapshot.ChunkLengths[chunkIdx]
+	}
+
+	remainingSpace := func(chunkIdx int, startOffset int) int {
+		return snapshot.ChunkLengths[chunkIdx] - startOffset
+	}
+
+	// step 1: build a chunk usage list
+	for _, entry := range snapshot.Files {
+		if !entry.IsFile() || entry.Size == 0 {
+			continue
+		}
+
+		if entry.StartChunk == entry.EndChunk {
+			addUsage(entry.StartChunk, entry.StartOffset, entry.EndOffset-entry.StartOffset)
+		} else {
+			addUsage(entry.StartChunk, entry.StartOffset, remainingSpace(entry.StartChunk, entry.StartOffset))
+			for cIdx := entry.StartChunk + 1; cIdx < entry.EndChunk; cIdx++ {
+				addUsage(cIdx, 0, remainingSpace(cIdx, 0)) // add entire chunk
+			}
+			addUsage(entry.EndChunk, 0, entry.EndOffset)
+		}
+
+	}
+
+	// step 2: count usage, gaps for each chunk
+	for cHash, sublengths := range chunkUsage {
+		// add up usages
+		used_length := 0
+		for _, sublength := range sublengths {
+			used_length += sublength
+		}
+		chunk_length := chunkLengths[cHash]
+		gap := int64(chunk_length - used_length)
+
+		gapSize += gap
+		if gap > 0 {
+			nrChunks++
+			reuploadSize += int64(used_length)
+		}
+	}
+
+	return gapSize, nrChunks, reuploadSize
+}
+
 // CheckSnapshot performs sanity checks on the given snapshot.
 func (manager *SnapshotManager) CheckSnapshot(snapshot *Snapshot) (err error) {
 
