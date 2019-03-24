@@ -676,8 +676,8 @@ func (manager *BackupManager) Backup(top string, quickMode bool, threads int, ta
 			PrettyNumber(totalUploadedFileChunkLength+totalUploadedSnapshotChunkLength),
 			PrettyNumber(totalUploadedFileChunkBytes+totalUploadedSnapshotChunkBytes))
 
-		gapSize, gapChunks, reuploadSize := manager.SnapshotManager.findGaps(localSnapshot)
-		oldGapSize, oldGapChunks, oldReuploadSize := manager.SnapshotManager.findGaps(remoteSnapshot)
+		gapSize, gapChunks, reuploadSize, _ := manager.SnapshotManager.findGaps(localSnapshot)
+		oldGapSize, oldGapChunks, oldReuploadSize, _ := manager.SnapshotManager.findGaps(remoteSnapshot)
 
 		LOG_INFO("BACKUP_STAT", "Deadspace: %s in %d file chunks; %s new gap space; %d new chunks",
 			PrettyNumber(gapSize), gapChunks, PrettyNumber(gapSize-oldGapSize), (gapChunks - oldGapChunks))

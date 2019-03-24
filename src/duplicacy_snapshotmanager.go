@@ -2284,63 +2284,121 @@ func (manager *SnapshotManager) pruneSnapshotsExhaustive(referencedFossils map[s
 	return true
 }
 
-// Find gaps in chunks - these are formed when more than one file is in a single chunk
-//   and one of the files is changed or deleted.  Call after CheckSnapshot?
-func (manager *SnapshotManager) findGaps(snapshot *Snapshot) (gapSize int64, nrChunks int, reuploadSize int64) {
-	type usageList map[int]int // subchunk start -> subchunk size (or end?)
-	chunkUsage := make(map[string]usageList)
-	chunkLengths := make(map[string]int)
+// Find gaps in chunks - these are formed when more than one file is in a single chunk,
+//   and one of the files is changed or deleted.  Safest to call this after CheckSnapshot() for new snapshots.
+func (manager *SnapshotManager) findGaps(snapshot *Snapshot) (gapSize int64, nrFragmentedChunks int, reuploadSize int64, fragmentedEntries map[*Entry]bool) {
+	type bounds map[int]int
+	fragmentedEntries = make(map[*Entry]bool)
+	// since several chunk indexes can point to the same chunk, we'll be very conservative here and map on chunk ID
+	chunkEntries := make(map[string][]*Entry) // map[chunk hash] => entries in chunk
+	chunkParts := make(map[string]bounds)     // map[chunk hash] => entries in chunk
+	chunkLengths := make(map[string]int)      // map[chunk hash] => chunk length
 
-	addUsage := func(chunkIdx int, startOffset int, size int) {
-		ulist := chunkUsage[snapshot.ChunkHashes[chunkIdx]]
-		if ulist == nil {
-			ulist = make(usageList)
+	// map chunk-idx to the set of start->end offsets in the chunk
+	addUsage := func(chunkIdx int, entry *Entry, startOffset int, endOffset int) {
+		chunkID := snapshot.ChunkHashes[chunkIdx]
+		chunkLength := snapshot.ChunkLengths[chunkIdx]
+		if endOffset == -1 {
+			endOffset = chunkLength
 		}
-		ulist[startOffset] = size
-		chunkUsage[snapshot.ChunkHashes[chunkIdx]] = ulist
-		chunkLengths[snapshot.ChunkHashes[chunkIdx]] = snapshot.ChunkLengths[chunkIdx]
+
+		blist := chunkParts[chunkID]
+		if blist == nil {
+			blist = make(bounds)
+		}
+		if endOffset > blist[startOffset] {
+			blist[startOffset] = endOffset
+		}
+
+		elist := chunkEntries[chunkID]
+		if elist == nil {
+			elist = make([]*Entry, 0, 2)
+		}
+
+		chunkParts[chunkID] = blist
+		chunkEntries[chunkID] = append(elist, entry)
+		if chunkLengths[chunkID] > 0 && chunkLengths[chunkID] != chunkLength {
+			LOG_ERROR("FIND_GAPS", "Chunks with the same hash have different lengths (idx %d)!", chunkIdx)
+		}
+		chunkLengths[chunkID] = chunkLength
 	}
 
-	remainingSpace := func(chunkIdx int, startOffset int) int {
-		return snapshot.ChunkLengths[chunkIdx] - startOffset
-	}
-
-	// step 1: build a chunk usage list
+	entryDupTest := make(map[string]*Entry)
+	// step 1: build a chunk usage list for chunks containing more than one Entry
 	for _, entry := range snapshot.Files {
 		if !entry.IsFile() || entry.Size == 0 {
 			continue
 		}
+		if entryDupTest[entry.Path] != nil {
+			LOG_WARN("CHECK_GAPS", "Duplicate entries for same file %s", entry.Path)
+			continue
+		}
+		entryDupTest[entry.Path] = entry
 
+		// note there were too many (real) edge cases where chunks are shared in very odd ways (particularly with "db" files filled with some "null" pattern
+		// So just record every single chunk and explicitly associate each index with its chunk
 		if entry.StartChunk == entry.EndChunk {
-			addUsage(entry.StartChunk, entry.StartOffset, entry.EndOffset-entry.StartOffset)
+			addUsage(entry.StartChunk, entry, entry.StartOffset, entry.EndOffset)
 		} else {
-			addUsage(entry.StartChunk, entry.StartOffset, remainingSpace(entry.StartChunk, entry.StartOffset))
-			for cIdx := entry.StartChunk + 1; cIdx < entry.EndChunk; cIdx++ {
-				addUsage(cIdx, 0, remainingSpace(cIdx, 0)) // add entire chunk
+			addUsage(entry.StartChunk, entry, entry.StartOffset, -1) // -1 => end of chunk
+			for idx := entry.StartChunk + 1; idx < entry.EndChunk; idx++ {
+				addUsage(idx, entry, 0, -1)
 			}
-			addUsage(entry.EndChunk, 0, entry.EndOffset)
+			addUsage(entry.EndChunk, entry, 0, entry.EndOffset)
 		}
-
 	}
 
-	// step 2: count usage, gaps for each chunk
-	for cHash, sublengths := range chunkUsage {
+	// step 2: count usage and gaps within each chunk.
+	for chunkID, subchunks := range chunkParts { //chunkEntries[idx] is a bounds map
+		chunk_length := chunkLengths[chunkID]
+
 		// add up usages
-		used_length := 0
-		for _, sublength := range sublengths {
-			used_length += sublength
+		// go through subchunks in startOffset order
+		var keys []int
+		for k := range subchunks {
+			keys = append(keys, k)
 		}
-		chunk_length := chunkLengths[cHash]
-		gap := int64(chunk_length - used_length)
+		sort.Ints(keys)
 
-		gapSize += gap
-		if gap > 0 {
-			nrChunks++
-			reuploadSize += int64(used_length)
+		gap := 0
+		used_length := 0
+		previousEnd := 0
+		for _, startOffset := range keys {
+			endOffset := subchunks[startOffset]
+			if startOffset >= previousEnd {
+				used_length += (endOffset - startOffset)
+				gap += (startOffset - previousEnd)
+			} else if endOffset > previousEnd {
+				// there's partial overlap
+				used_length += (endOffset - previousEnd)
+			} // otherwise subchunk is fully contained in the previous subchunks, don't count it.
+			if endOffset > previousEnd {
+				previousEnd = endOffset
+			}
+			if used_length == chunk_length {
+				break // entire chunk is in use, no need to continue
+			}
+		}
+		gap += (chunk_length - previousEnd)
+
+		// determine and process gap length
+		if gap != (chunk_length - used_length) {
+			LOG_WARN("CHECK_GAPS", "Still having trouble counting: gap %d != chunk_length - used_length (%d - %d)", gap, chunk_length, used_length)
+		}
+
+		if gap < 0 {
+			LOG_ERROR("CHECK_GAPS", "used_length %d is longer than chunk_length %d in findGaps: something is wrong!", used_length, chunk_length)
+		} else if gap > 0 {
+			gapSize += int64(gap)
+			nrFragmentedChunks++
+			reuploadSize += int64(used_length) // bytes needed to reupload to for new fragmentless chunks (if not using EOF breaks, this is the minimum size)
+			for _, entry := range chunkEntries[chunkID] {
+				fragmentedEntries[entry] = true
+			}
 		}
 	}
 
-	return gapSize, nrChunks, reuploadSize
+	return gapSize, nrFragmentedChunks, reuploadSize, fragmentedEntries
 }
 
 // CheckSnapshot performs sanity checks on the given snapshot.
