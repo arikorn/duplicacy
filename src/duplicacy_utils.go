@@ -402,17 +402,26 @@ func PrettyNumber(number int64) string {
 	M := int64(1024 * 1024)
 	K := int64(1024)
 
-	if number > 1000*G {
-		return fmt.Sprintf("%dG", number/G)
-	} else if number > G {
-		return fmt.Sprintf("%d,%03dM", number/(1000*M), (number/M)%1000)
-	} else if number > M {
-		return fmt.Sprintf("%d,%03dK", number/(1000*K), (number/K)%1000)
-	} else if number > K {
-		return fmt.Sprintf("%dK", number/K)
-	} else {
-		return fmt.Sprintf("%d", number)
+	var value string
+
+	sign := ""
+	if number < 0 {
+		number = -number
+		sign = "-"
 	}
+	if number > 1000*G {
+		value = fmt.Sprintf("%dG", number/G)
+	} else if number > G {
+		value = fmt.Sprintf("%d,%03dM", number/(1000*M), (number/M)%1000)
+	} else if number > M {
+		value = fmt.Sprintf("%d,%03dK", number/(1000*K), (number/K)%1000)
+	} else if number > K {
+		value = fmt.Sprintf("%dK", number/K)
+	} else {
+		value = fmt.Sprintf("%d", number)
+	}
+
+	return sign + value
 }
 
 func PrettySize(size int64) string {

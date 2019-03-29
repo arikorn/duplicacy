@@ -904,12 +904,16 @@ func checkSnapshots(context *cli.Context) {
 
 	showStatistics := context.Bool("stats")
 	showTabular := context.Bool("tabular")
+	showFragmentation := context.Bool("fragmentation")
+	if showFragmentation && !showTabular {
+		showStatistics = true
+	}
 	checkFiles := context.Bool("files")
 	searchFossils := context.Bool("fossils")
 	resurrect := context.Bool("resurrect")
 
 	backupManager.SetupSnapshotCache(preference.Name)
-	backupManager.SnapshotManager.CheckSnapshots(id, revisions, tag, showStatistics, showTabular, checkFiles, searchFossils, resurrect)
+	backupManager.SnapshotManager.CheckSnapshots(id, revisions, tag, showStatistics, showTabular, showFragmentation, checkFiles, searchFossils, resurrect)
 
 	runScript(context, preference.Name, "post")
 }
@@ -1558,6 +1562,10 @@ func main() {
 				cli.BoolFlag{
 					Name:  "tabular",
 					Usage: "show tabular usage and deduplication statistics (imply -stats, -all, and all revisions)",
+				},
+				cli.BoolFlag{
+					Name:  "fragmentation, frag",
+					Usage: "also report deadspace and livespace in fragmentated chunk:  (imply -stats, -all, and all revisions; can be used with -tabular)",
 				},
 				cli.StringFlag{
 					Name:     "storage",

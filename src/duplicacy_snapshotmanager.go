@@ -756,7 +756,7 @@ func (manager *SnapshotManager) ListSnapshots(snapshotID string, revisionsToList
 }
 
 // ListSnapshots shows the information about a snapshot.
-func (manager *SnapshotManager) CheckSnapshots(snapshotID string, revisionsToCheck []int, tag string, showStatistics bool, showTabular bool,
+func (manager *SnapshotManager) CheckSnapshots(snapshotID string, revisionsToCheck []int, tag string, showStatistics bool, showTabular bool, showFragmentation bool,
 	checkFiles bool, searchFossils bool, resurrect bool) bool {
 
 	LOG_DEBUG("LIST_PARAMETERS", "id: %s, revisions: %v, tag: %s, showStatistics: %t, checkFiles: %t, searchFossils: %t, resurrect: %t",
@@ -927,9 +927,9 @@ func (manager *SnapshotManager) CheckSnapshots(snapshotID string, revisionsToChe
 	}
 
 	if showTabular {
-		manager.ShowStatisticsTabular(snapshotMap, chunkSizeMap, chunkUniqueMap, chunkSnapshotMap)
+		manager.ShowStatisticsTabular(snapshotMap, chunkSizeMap, chunkUniqueMap, chunkSnapshotMap, showFragmentation)
 	} else if showStatistics {
-		manager.ShowStatistics(snapshotMap, chunkSizeMap, chunkUniqueMap, chunkSnapshotMap)
+		manager.ShowStatistics(snapshotMap, chunkSizeMap, chunkUniqueMap, chunkSnapshotMap, showFragmentation)
 	}
 
 	return true
@@ -937,7 +937,7 @@ func (manager *SnapshotManager) CheckSnapshots(snapshotID string, revisionsToChe
 
 // Print snapshot and revision statistics
 func (manager *SnapshotManager) ShowStatistics(snapshotMap map[string][]*Snapshot, chunkSizeMap map[string]int64, chunkUniqueMap map[string]bool,
-	chunkSnapshotMap map[string]int) {
+	chunkSnapshotMap map[string]int, showFragmentation bool) {
 	for snapshotID, snapshotList := range snapshotMap {
 
 		snapshotChunks := make(map[string]bool)
@@ -949,7 +949,6 @@ func (manager *SnapshotManager) ShowStatistics(snapshotMap map[string][]*Snapsho
 				chunks[chunkID] = true
 				snapshotChunks[chunkID] = true
 			}
-
 			var totalChunkSize int64
 			var uniqueChunkSize int64
 
@@ -965,8 +964,14 @@ func (manager *SnapshotManager) ShowStatistics(snapshotMap map[string][]*Snapsho
 			if snapshot.FileSize != 0 && snapshot.NumberOfFiles != 0 {
 				files = fmt.Sprintf("%d files (%s bytes), ", snapshot.NumberOfFiles, PrettyNumber(snapshot.FileSize))
 			}
-			LOG_INFO("SNAPSHOT_CHECK", "Snapshot %s at revision %d: %s%s total chunk bytes, %s unique chunk bytes",
-				snapshot.ID, snapshot.Revision, files, PrettyNumber(totalChunkSize), PrettyNumber(uniqueChunkSize))
+			statstring := fmt.Sprintf("Snapshot %s at revision %d: %s%s total chunk bytes, %s unique chunk bytes", snapshot.ID, snapshot.Revision, files, PrettyNumber(totalChunkSize), PrettyNumber(uniqueChunkSize))
+			if showFragmentation {
+				// file Files, ChunkHashes, and Chunklengths, and check for errors (which is advised for findGaps)
+				manager.DownloadSnapshotContents(snapshot, nil, false)
+				gapSize, gapChunks, usedFragSize, _ := manager.findGaps(snapshot)
+				statstring += fmt.Sprintf("; %s bytes deadspace and %s bytes used in %d fragmented chunks", PrettyNumber(gapSize), PrettyNumber(usedFragSize), gapChunks)
+			}
+			LOG_INFO("SNAPSHOT_CHECK", statstring)
 		}
 
 		var totalChunkSize int64
@@ -986,13 +991,18 @@ func (manager *SnapshotManager) ShowStatistics(snapshotMap map[string][]*Snapsho
 
 // Print snapshot and revision statistics in tabular format
 func (manager *SnapshotManager) ShowStatisticsTabular(snapshotMap map[string][]*Snapshot, chunkSizeMap map[string]int64, chunkUniqueMap map[string]bool,
-	chunkSnapshotMap map[string]int) {
+	chunkSnapshotMap map[string]int, showFragmentation bool) {
 	tableBuffer := new(bytes.Buffer)
 	tableWriter := tabwriter.NewWriter(tableBuffer, 0, 0, 1, ' ', tabwriter.AlignRight|tabwriter.Debug)
 
 	for snapshotID, snapshotList := range snapshotMap {
 		fmt.Fprintln(tableWriter, "")
-		fmt.Fprintln(tableWriter, " snap \trev \t \tfiles \tbytes \tchunks \tbytes \tuniq \tbytes \tnew \tbytes \t")
+		fmt.Fprint(tableWriter, " snap \trev \t \tfiles \tbytes \tchunks \tbytes \tuniq \tbytes \tnew \tbytes")
+		if showFragmentation {
+			fmt.Fprint(tableWriter, "\tfrag \tgapbytes \tusedbytes")
+		}
+		fmt.Fprintln(tableWriter)
+
 		snapshotChunks := make(map[string]bool)
 
 		earliestSeenChunks := make(map[string]int)
@@ -1040,9 +1050,20 @@ func (manager *SnapshotManager) ShowStatisticsTabular(snapshotMap map[string][]*
 				files = fmt.Sprintf("%d \t%s", snapshot.NumberOfFiles, PrettyNumber(snapshot.FileSize))
 			}
 			creationTime := time.Unix(snapshot.StartTime, 0).Format("2006-01-02 15:04")
-			fmt.Fprintln(tableWriter, fmt.Sprintf(
-				"%s \t%d \t@ %s %5s \t%s \t%d \t%s \t%d \t%s \t%d \t%s \t",
+
+			fmt.Fprint(tableWriter, fmt.Sprintf(
+				"%s \t%d \t@ %s %5s \t%s \t%d \t%s \t%d \t%s \t%d \t%s",
 				snapshotID, snapshot.Revision, creationTime, snapshot.Options, files, totalChunkCount, PrettyNumber(totalChunkSize), uniqueChunkCount, PrettyNumber(uniqueChunkSize), newChunkCount, PrettyNumber(newChunkSize)))
+			if showFragmentation {
+				// file Files, ChunkHashes, and Chunklengths, and check for errors (which is advised for findGaps)
+				manager.DownloadSnapshotContents(snapshot, nil, false)
+				gapSize, gapChunks, usedFragSize, _ := manager.findGaps(snapshot)
+				fmt.Fprint(tableWriter, fmt.Sprintf(
+					" \t%d \t%s \t%s",
+					gapChunks, PrettyNumber(gapSize), PrettyNumber(usedFragSize)))
+			}
+			fmt.Fprintln(tableWriter)
+
 		}
 
 		var totalChunkSize int64
