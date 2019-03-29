@@ -905,9 +905,6 @@ func checkSnapshots(context *cli.Context) {
 	showStatistics := context.Bool("stats")
 	showTabular := context.Bool("tabular")
 	showFragmentation := context.Bool("fragmentation")
-	if showFragmentation && !showTabular {
-		showStatistics = true
-	}
 	checkFiles := context.Bool("files")
 	searchFossils := context.Bool("fossils")
 	resurrect := context.Bool("resurrect")
@@ -1565,7 +1562,7 @@ func main() {
 				},
 				cli.BoolFlag{
 					Name:  "fragmentation, frag",
-					Usage: "also report deadspace and livespace in fragmentated chunk:  (imply -stats, -all, and all revisions; can be used with -tabular)",
+					Usage: "report deadspace and livespace in fragmentated chunks:  (can be used alone or combined with -tabular or -stats)",
 				},
 				cli.StringFlag{
 					Name:     "storage",

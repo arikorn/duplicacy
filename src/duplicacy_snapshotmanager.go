@@ -916,6 +916,12 @@ func (manager *SnapshotManager) CheckSnapshots(snapshotID string, revisionsToChe
 				LOG_INFO("SNAPSHOT_CHECK", "All chunks referenced by snapshot %s at revision %d exist",
 					snapshotID, snapshot.Revision)
 			}
+			if showFragmentation && !(showTabular || showStatistics) {
+				// file Files, ChunkHashes, and Chunklengths, and check for errors (which is advised for findGaps)
+				manager.DownloadSnapshotContents(snapshot, nil, false)
+				gapSize, gapChunks, usedFragSize, _ := manager.findGaps(snapshot)
+				LOG_INFO("SNAPSHOT_CHECK", "  --> %s bytes deadspace and %s used bytes in %d fragmented chunks", PrettyNumber(gapSize), PrettyNumber(usedFragSize), gapChunks)
+			}
 		}
 
 		snapshotIDIndex += 1
