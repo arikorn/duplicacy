@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+    "golang.org/x/text/language"
+    "golang.org/x/text/message"
 )
 
 const (
@@ -23,7 +25,7 @@ const (
 	ASSERT = 4
 )
 
-var LogFunction func(level int, logID string, message string)
+var LogFunction func(level int, logID string, logMessage string)
 
 var printLogHeader = false
 
@@ -115,28 +117,29 @@ type Exception struct {
 var logMutex sync.Mutex
 
 func logf(level int, logID string, format string, v ...interface{}) {
+    p := message.NewPrinter(language.English)    // TODO: Allow user to specify language in preferences; or read system prefs (see jibber_jabber?)
 
-	message := fmt.Sprintf(format, v...)
+	logMessage := p.Sprintf(format, v...)
 
 	if LogFunction != nil {
-		LogFunction(level, logID, message)
+		LogFunction(level, logID, logMessage)
 		return
 	}
 
 	now := time.Now()
 
 	// Uncomment this line to enable unbufferred logging for tests
-	// fmt.Printf("%s %s %s %s\n", now.Format("2006-01-02 15:04:05.000"), getLevelName(level), logID, message)
+	// fmt.Printf("%s %s %s %s\n", now.Format("2006-01-02 15:04:05.000"), getLevelName(level), logID, logMessage)
 
 	if testingT != nil {
 		if level <= WARN {
 			if level >= loggingLevel {
 				testingT.Logf("%s %s %s %s\n",
-					now.Format("2006-01-02 15:04:05.000"), getLevelName(level), logID, message)
+					now.Format("2006-01-02 15:04:05.000"), getLevelName(level), logID, logMessage)
 			}
 		} else {
 			testingT.Errorf("%s %s %s %s\n",
-				now.Format("2006-01-02 15:04:05.000"), getLevelName(level), logID, message)
+				now.Format("2006-01-02 15:04:05.000"), getLevelName(level), logID, logMessage)
 		}
 	} else {
 		logMutex.Lock()
@@ -145,9 +148,9 @@ func logf(level int, logID string, format string, v ...interface{}) {
 		if level >= loggingLevel {
 			if printLogHeader {
 				fmt.Printf("%s %s %s %s\n",
-					now.Format("2006-01-02 15:04:05.000"), getLevelName(level), logID, message)
+					now.Format("2006-01-02 15:04:05.000"), getLevelName(level), logID, logMessage)
 			} else {
-				fmt.Printf("%s\n", message)
+				fmt.Printf("%s\n", logMessage)
 			}
 		}
 	}
@@ -156,7 +159,7 @@ func logf(level int, logID string, format string, v ...interface{}) {
 		panic(Exception{
 			Level:   level,
 			LogID:   logID,
-			Message: message,
+			Message: logMessage,
 		})
 	}
 }

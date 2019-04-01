@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"regexp"
 	"strconv"
@@ -17,6 +18,8 @@ import (
 
 	"github.com/gilbertchen/gopass"
 	"golang.org/x/crypto/pbkdf2"
+    "golang.org/x/text/language"
+    "golang.org/x/text/message"
 )
 
 var RunInBackground bool = false
@@ -398,30 +401,28 @@ func MatchPath(filePath string, patterns []string) (included bool) {
 
 func PrettyNumber(number int64) string {
 
-	G := int64(1024 * 1024 * 1024)
-	M := int64(1024 * 1024)
-	K := int64(1024)
+	T := float64(1024 * 1024 * 1024 * 1024)
+	G := float64(1024 * 1024 * 1024)
+	M := float64(1024 * 1024)
+	K := float64(1024)
 
-	var value string
+    p := message.NewPrinter(language.English)  // TODO: Allow user to specify language in preferences; or read system prefs (see jibber_jabber?)
 
-	sign := ""
-	if number < 0 {
-		number = -number
-		sign = "-"
-	}
-	if number > 1000*G {
-		value = fmt.Sprintf("%dG", number/G)
-	} else if number > G {
-		value = fmt.Sprintf("%d,%03dM", number/(1000*M), (number/M)%1000)
-	} else if number > M {
-		value = fmt.Sprintf("%d,%03dK", number/(1000*K), (number/K)%1000)
-	} else if number > K {
-		value = fmt.Sprintf("%dK", number/K)
+	floatVal := float64(number)
+	absVal := math.Abs(floatVal)
+
+	// the following guarantees at least 3 sig figs (and less than 5 for sizes < 100T), while avoiding decimal separators
+	if absVal >= 100*T {
+		return p.Sprintf("%.0fT", floatVal/T)
+	} else if absVal >= 100*G {
+		return p.Sprintf("%.0fG", floatVal/G)
+	} else if absVal >= 100*M {
+		return p.Sprintf("%.0fM", floatVal/M)
+	} else if absVal >= 100*K {
+		return p.Sprintf("%.0fK", floatVal/K)
 	} else {
-		value = fmt.Sprintf("%d", number)
+		return p.Sprintf("%d", number)
 	}
-
-	return sign + value
 }
 
 func PrettySize(size int64) string {
