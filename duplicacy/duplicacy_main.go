@@ -1562,7 +1562,7 @@ func main() {
 				},
 				cli.BoolFlag{
 					Name:  "fragmentation, frag",
-					Usage: "report deadspace and livespace in fragmentated chunks:  (can be used alone or combined with -tabular or -stats)",
+					Usage: "report deadspace and livespace in fragmented chunks:  (can be used alone or combined with -tabular or -stats)",
 				},
 				cli.StringFlag{
 					Name:     "storage",
